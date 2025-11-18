@@ -1,0 +1,307 @@
+services:
+  consul:
+    image: hashicorp/consul:latest
+    restart: always
+    user: "0:0"  # Run as root to avoid permission issues
+    container_name: consul
+    ports:
+      - "8500:8500"
+    volumes:
+      - /data/local-environment/consul-data:/consul/data
+    command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0 -data-dir=/consul/data
+    networks:
+      - app_network
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.6.6
+    container_name: etcd
+    restart: always
+    user: "0:0" 
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - /data/local-environment/etcd-data:/data # 持久化 etcd 数据
+    command: etcd -name etcd0 -data-dir /data -listen-client-urls http://0.0.0.0:2379 -advertise-client-urls http://etcd:2379,http://localhost:2379 -listen-peer-urls http://0.0.0.0:2380 -initial-advertise-peer-urls http://etcd:2380 -initial-cluster etcd0=http://etcd:2380 -initial-cluster-token my-etcd-token -initial-cluster-state new
+    networks:
+      - app_network
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    restart: always
+    user: "0:0"  # Add this line to run as root
+    ports:
+      - "9094:9094" # For external communication from host
+      - "9092:9092" # For internal communication within the cluster
+      - "9093:9093" # For internal communication within the cluster
+    environment:
+      - KAFKA_NODE_ID=0
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://0.0.0.0:9094
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+    volumes:
+      - /data/local-environment/kafka-data:/kafka
+    networks:
+      - app_network
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    restart: always
+    ports:
+      - 18086:8080
+    environment:
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    networks:
+      - app_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    user: "0:0"
+    ports:
+      - "13306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=secret
+      - MYSQL_DATABASE=mydatabase
+    volumes:
+      - /data/local-environment/mysql:/var/lib/mysql
+    command: [--default-authentication-plugin=mysql_native_password]
+    networks:
+      - app_network
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "16379:6379"
+    networks:
+      - app_network
+
+  elasticsearch:
+    image: elasticsearch:7.17.0 # Using a specific version compatible with Kibana 7.17.0
+    container_name: elasticsearch
+    restart: always
+    user: "0:0"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m # Adjust memory as needed
+    volumes:
+      - /data/local-environment/es:/usr/share/elasticsearch/data
+    networks:
+      - app_network
+
+  kibana:
+    image: kibana:7.17.0
+    container_name: kibana
+    restart: always 
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - app_network
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: always
+    ports:
+      - "6831:6831/udp" # Agent
+      - "16686:16686"   # UI
+      - "14268:14268"   # Collector HTTP
+      - "14250:14250"   # Collector gRPC
+    networks:
+      - app_network
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    restart: always
+    ports:
+      - "9411:9411"
+    networks:
+      - app_network
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    user: "0:0" 
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=secret
+    volumes:
+      - /data/local-environment/mongo:/data/db
+    networks:
+      - app_network
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: always
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf # Optional: mount custom config
+    networks:
+      - app_network
+
+  emqx:
+    image: emqx/emqx:latest
+    container_name: emqx
+    restart: always
+    user: "0:0"
+    ports:
+      - "1883:1883"
+      - "8883:8883"
+      - "8083:8083"
+      - "8084:8084"
+      - "8081:8081"
+      - "18083:18083"
+    volumes:
+      - /data/local-environment/emqx-data:/opt/emqx/data
+      - /data/local-environment/emqx-log:/opt/emqx/log
+    networks:
+      - app_network
+
+  apisix:
+    image:  apache/apisix:latest
+    container_name: apisix
+    restart: always
+    environment:
+      - ETCD_HOST=etcd
+    volumes:
+      - ./apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml # APISIX 配置文件
+      #- ./apisix_log:/usr/local/apisix/logs # APISIX 日志文件
+      # APISIX 的路由、插件等核心配置存储在 etcd 中，etcd 的数据已通过其自身服务的 volumes 配置持久化。
+    ports:
+      - "9080:9080" # 数据平面 HTTP 端口
+      - "9180:9180" # Admin API 端口
+      - "9443:9443" # 数据平面 HTTPS 端口
+    depends_on:
+      - etcd # Assuming etcd service is already defined or will be added
+    networks:
+      - app_network
+
+  apisix-dashboard:
+    image:  apache/apisix-dashboard:latest
+    container_name: apisix-dashboard
+    restart: always
+    volumes:
+      - ./apisix_dashboard_conf/conf.yaml:/usr/local/apisix-dashboard/conf/conf.yaml # APISIX-DASHBOARD 配置文件
+      # APISIX 的路由、插件等核心配置存储在 etcd 中，etcd 的数据已通过其自身服务的 volumes 配置持久化。
+    ports:
+      - "9000:9000"
+    depends_on:
+      - etcd # Assuming etcd service is already defined or will be added
+    networks:
+      - app_network
+
+  influxdb:
+    image: influxdb:1.7.4
+    container_name: influxdb
+    restart: always
+    user: "0:0" 
+    ports:
+      - "8086:8086" # HTTP API 端口
+      - "18085:8083" # Admin UI 端口
+    volumes:
+      - /data/local-environment/influxdb-data:/var/lib/influxdb # 持久化数据
+    environment:
+      - INFLUXDB_DB=metrics # 默认创建的数据库
+      - INFLUXDB_ADMIN_USER=root # 管理员用户
+      - INFLUXDB_ADMIN_PASSWORD=root # 管理员密码
+      - INFLUXDB_HTTP_AUTH_ENABLED=true # 启用HTTP认证
+    networks:
+      - app_network
+
+  zlm:
+    image: zlmediakit/zlmediakit:master
+    container_name: zlm
+    restart: always
+    ports:
+      - "11935:1935" # RTMP
+      - "10554:554"  # RTSP
+      - "18080:80"   # HTTP
+      - "14443:443"  # HTTPS
+      - "30200-30206:30200-30206" # RTP
+    # 如果需要自定义配置，请根据镜像实际路径调整下面挂载位置
+    volumes:
+      - ./zlm_conf/conf/config.ini:/opt/ZLMediaKit/release/conf/config.ini
+    networks:
+      - app_network
+
+  lalserver:
+    image: q191201771/lal:latest
+    container_name: lalserver
+    restart: always
+    # 使用你的配置文件启动；如果镜像路径不同请调整
+    volumes:
+      - ./lal_conf/lalserver.conf.json:/app/lalserver.conf.json
+    command: ["/lal/bin/lalserver", "-c", "/app/lalserver.conf.json"]
+    ports:
+      - "11936:1935" # RTMP
+      - "18090:8080" # HTTP-FLV/HLS (以配置为准)
+    networks:
+      - app_network
+
+  postgresql:
+    image: postgres:latest
+    container_name: postgresql
+    restart: always
+    ports:
+      - "15432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - /data/local-environment/postgresql-data:/var/lib/postgresql
+    networks:
+      - app_network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    restart: always
+    ports:
+      - "18123:8123" # HTTP interface
+      - "19000:9000" # Native TCP interface
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=password123
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - /data/local-environment/clickhouse-data:/var/lib/clickhouse
+      # - ./clickhouse_conf/config.xml:/etc/clickhouse-server/config.xml:ro
+      # - ./clickhouse_conf/users.xml:/etc/clickhouse-server/users.xml:ro 
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
